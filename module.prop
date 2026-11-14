@@ -1,0 +1,6 @@
+id=cpufakex
+name=CPUFakeX
+version=v1.0
+versionCode=1
+author=eLSanz
+description=Spoof total SoC: Snapdragon 8 Elite Extreme Gen 6 (SM8950). Lapisan: system props, /proc/cpuinfo, device-tree model, soc0 machine, opsional cpufreq. CLI + WebUI.

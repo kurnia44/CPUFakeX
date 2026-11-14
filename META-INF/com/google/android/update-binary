@@ -1,0 +1,26 @@
+#!/sbin/sh
+umask 022
+MODID=cpufakex
+NZ="${NVBASE:-/data/adb}"
+MODPATH="$NZ/modules/$MODID"
+CFG="$NZ/$MODID"
+ZIPFILE="$3"
+[ -n "$ZIPFILE" ] || ZIPFILE="$2"
+[ -f "$ZIPFILE" ] || { echo "! zip tidak ditemukan"; exit 1; }
+
+mkdir -p "$MODPATH" "$CFG" 2>/dev/null
+UNZIP=$(command -v unzip 2>/dev/null || echo "busybox unzip")
+$UNZIP -o "$ZIPFILE" -x 'META-INF/*' -d "$MODPATH" >/dev/null 2>&1
+[ -f "$MODPATH/module.prop" ] || { echo "! ekstraksi gagal"; exit 1; }
+
+chmod 755 "$MODPATH"/*.sh 2>/dev/null
+chmod 755 "$MODPATH"/bin/*.sh 2>/dev/null
+chmod 644 "$MODPATH/module.prop" "$MODPATH/defaults.conf" 2>/dev/null
+chmod 644 "$MODPATH"/webroot/* 2>/dev/null
+chmod -R 755 "$CFG" 2>/dev/null
+
+[ -s "$CFG/config.conf" ] || cp -f "$MODPATH/defaults.conf" "$CFG/config.conf" 2>/dev/null
+chmod 600 "$CFG/config.conf" 2>/dev/null
+
+MODPATH="$MODPATH" sh "$MODPATH/customize.sh" 2>/dev/null
+exit 0

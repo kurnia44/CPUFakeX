@@ -1,0 +1,20 @@
+# CPUFakeX — dibaca otomatis oleh KernelSU/APatch saat boot (resetprop).
+# Format build.prop: key=value
+ro.soc.model=SM8950
+ro.soc.manufacturer=Qualcomm
+ro.soc.arch=arm64-v8a
+ro.board.platform=sunridge
+ro.product.board=sunridge
+ro.boot.board=sunridge
+ro.hardware=qcom
+ro.boot.hardware=qcom
+ro.chipname=SM8950
+ro.hardware.chipname=SM8950
+ro.boot.hardware.chipname=SM8950
+ro.vendor.qti.soc_model=SM8950
+ro.vendor.qti.soc_name=SM8950
+ro.qti.soc.model=SM8950
+ro.build.soc=SM8950
+ro.config.soc=SM8950
+ro.soc.name=SM8950
+ro.vendor.qti.hardware.chipname=SM8950

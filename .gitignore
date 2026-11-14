@@ -1,0 +1,8 @@
+*.zip
+state
+module.log
+daemon.pid
+orig.props
+mounts.list
+props.list
+fake/
