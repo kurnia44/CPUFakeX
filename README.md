@@ -11,7 +11,7 @@ membuatnya terbaca sebagai **Snapdragon 8 Elite Extreme Gen 6 (SM8950 / sunridge
 | `/proc/cpuinfo` | 8 core, `CPU part 0x002`, variant, features, BogoMIPS | bind mount |
 | Device-tree | `/proc/device-tree/model`, `/sys/firmware/devicetree/base/model` | bind mount |
 | soc0 | `/sys/devices/soc0/machine`, `family` | bind mount |
-| cpufreq | `cpuinfo_max_freq` per policy: 6 perf 4.2 GHz, 2 prime 4.75 GHz | bind mount |
+| cpufreq (opsional, default OFF) | `cpuinfo_max_freq` per policy: 6 perf 4.2 GHz, 2 prime 4.75 GHz | bind mount |
 
 Mount dilakukan di namespace init **dan** zygote lewat `nsenter`, plus `post-fs-data.sh` supaya
 app yang dijalankan belakangan mewarisi mount-nya.

@@ -12,7 +12,7 @@ ui_print "  lapisan spoof:"
 ui_print "   - system.prop (ro.soc.model, ro.board.platform, chipname)"
 ui_print "   - /proc/cpuinfo (8 core, part 0x002, features)"
 ui_print "   - device-tree model + /sys/devices/soc0"
-ui_print "   - cpufreq cpuinfo_max_freq (2 prime 4.75GHz / 6 perf 4.2GHz)"
+ui_print "   - cpufreq: OPSIONAL, default MATI (kosmetik, tidak perlu)"
 ui_print " "
 
 _cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)

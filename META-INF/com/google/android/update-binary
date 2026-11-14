@@ -22,5 +22,16 @@ chmod -R 755 "$CFG" 2>/dev/null
 [ -s "$CFG/config.conf" ] || cp -f "$MODPATH/defaults.conf" "$CFG/config.conf" 2>/dev/null
 chmod 600 "$CFG/config.conf" 2>/dev/null
 
+# migrasi v1.2: lapisan cpufreq dimatikan (cosmetic-only, bisa dinyalakan dari WebUI)
+if ! grep -q '^migrated_v12=1' "$CFG/config.conf" 2>/dev/null; then
+  awk 'BEGIN{d=0}
+    index($0,"spoof_cpufreq=")==1{print "spoof_cpufreq=0"; d=1; next}
+    {print}
+    END{if(!d) print "spoof_cpufreq=0"; print "migrated_v12=1"}' \
+    "$CFG/config.conf" > "$CFG/config.conf.new" 2>/dev/null && \
+    mv "$CFG/config.conf.new" "$CFG/config.conf"
+  chmod 600 "$CFG/config.conf" 2>/dev/null
+fi
+
 MODPATH="$MODPATH" sh "$MODPATH/customize.sh" 2>/dev/null
 exit 0

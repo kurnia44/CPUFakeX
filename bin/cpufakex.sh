@@ -216,7 +216,6 @@ mount_layer() {
     done
   fi
   if [ "$(getv spoof_cpufreq)" = "1" ]; then
-    # cpuN/cpufreq adalah symlink ke policyN — resolusi dulu, satu bind per policy
     _seen=" "
     _i=0
     while [ "$_i" -lt "$CORES" ]; do
@@ -390,12 +389,17 @@ check() {
       fi
       _i=$((_i+1))
     done
+  else
+    _v_fr=OFF
   fi
 
   _pass=0; _fail=0
-  for _x in $_v_prop $_v_ci $_v_dt $_v_soc $_v_fr; do
+  for _x in $_v_prop $_v_ci $_v_dt $_v_soc; do
     [ "$_x" = "OK" ] && _pass=$((_pass+1)) || _fail=$((_fail+1))
   done
+  if [ "$_v_fr" != "OFF" ]; then
+    [ "$_v_fr" = "OK" ] && _pass=$((_pass+1)) || _fail=$((_fail+1))
+  fi
   _verdict=OK
   [ "$_fail" -gt 0 ] && _verdict=WARN
   [ "$_fail" -ge 3 ] && _verdict=FAIL
