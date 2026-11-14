@@ -11,7 +11,10 @@ membuatnya terbaca sebagai **Snapdragon 8 Elite Extreme Gen 6 (SM8950 / sunridge
 | `/proc/cpuinfo` | 8 core, `CPU part 0x002`, variant, features, BogoMIPS | bind mount |
 | Device-tree | `/proc/device-tree/model`, `/sys/firmware/devicetree/base/model` | bind mount |
 | soc0 | `/sys/devices/soc0/machine`, `family` | bind mount |
-| cpufreq (opsional, default OFF) | `cpuinfo_max_freq` per policy: 6 perf 4.2 GHz, 2 prime 4.75 GHz | bind mount |
+| cpufreq (default ON) | `cpuinfo_max_freq` + `scaling_max_freq` + `*_min_freq` per **policy**: 6 perf 4.2 GHz, 2 prime 4.75 GHz | bind mount |
+
+Bind cpufreq dilakukan per `policyN`, bukan per `cpuN` — `cpuN/cpufreq/*` adalah symlink ke
+`policyN/*`, jadi satu bind per file per policy menutup semua core sekaligus.
 
 Mount dilakukan di namespace init **dan** zygote lewat `nsenter`, plus `post-fs-data.sh` supaya
 app yang dijalankan belakangan mewarisi mount-nya.
@@ -27,7 +30,23 @@ sh /data/adb/modules/cpufakex/bin/cpufakex.sh setk prime_max 5000000
 ```
 
 WebUI: buka modul dari KernelSU / APatch / MMRL — toggle per lapisan, editor identitas,
-topologi, dan checker yang membandingkan target vs nilai yang benar-benar terbaca.
+topologi, checker, kartu **Diagnostik** (resetprop / getprop / nsenter / SELinux / namespace),
+tombol **Restore** dan **Muat ulang**.
+
+Tombol **Action** di manager menjalankan status + apply + check lalu menampilkan hasilnya.
+Tidak ada menu volume-key: manager tidak memberi terminal interaktif, dan `getevent` tidak
+bisa dibaca dari konteks action di banyak device.
+
+## Bridge WebUI
+
+WebUI mencoba dua bentuk API dan mengingat mana yang bekerja:
+
+1. `exec(cmd, "namaFungsiCallback")` — KernelSU / KernelSU-Next (callback berupa **nama**, bukan objek)
+2. `exec(cmd)` yang mengembalikan string / Promise — APatch dan varian lain
+
+Probe `echo __cfok` dijalankan sekali di awal. Kalau dua-duanya gagal, status bridge tampil
+`tidak ada` dan pesan di kartu Verifikasi menyebut penyebabnya. Kegagalan tidak di-cache —
+tombol **Muat ulang** memaksa probe ulang tanpa menutup WebUI.
 
 ## Config
 

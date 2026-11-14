@@ -54,6 +54,8 @@ button.ghost{background:transparent}
   background:linear-gradient(180deg,rgba(11,13,18,.6),#0b0d12 40%);display:flex;gap:9px;
   border-top:1px solid var(--line);backdrop-filter:blur(12px)
 }
+.bar button{flex:1 1 0;width:auto;min-width:0}
+.bar button.ghost{flex:0 0 auto;padding-left:14px;padding-right:14px}
 pre{
   background:#080a0e;border:1px solid var(--line);border-radius:10px;padding:10px;
   font:11.5px/1.5 ui-monospace,Menlo,monospace;color:#9fb0c9;max-height:210px;overflow:auto;
@@ -82,6 +84,7 @@ pre{
   <div class="row"><span class="k">Bind mount</span><span class="v" id="s_mnt">—</span></div>
   <div class="row"><span class="k">Props terpasang</span><span class="v" id="s_prp">—</span></div>
   <div class="row"><span class="k">resetprop</span><span class="v" id="s_rp">—</span></div>
+  <div class="row"><span class="k">Bridge</span><span class="v" id="s_br">—</span></div>
   <div class="row"><span class="k">Daemon</span><span class="v" id="s_dmn">—</span></div>
 </div>
 
@@ -119,11 +122,23 @@ pre{
 </div>
 
 <div class="card">
+  <h2>Diagnostik</h2>
+  <div class="row"><span class="k">resetprop</span><span class="v" id="d_rp">—</span></div>
+  <div class="row"><span class="k">getprop</span><span class="v" id="d_gp">—</span></div>
+  <div class="row"><span class="k">nsenter</span><span class="v" id="d_ns">—</span></div>
+  <div class="row"><span class="k">SELinux enforce</span><span class="v" id="d_se">—</span></div>
+  <div class="row"><span class="k">namespace target</span><span class="v" id="d_pid">—</span></div>
+  <div class="row"><span class="k">state</span><span class="v" id="d_st">—</span></div>
+  <div class="row"><span class="k">script</span><span class="v" id="d_bin">—</span></div>
+</div>
+
+<div class="card">
   <h2>Verifikasi (check)</h2>
   <div class="row"><span class="k">Verdict</span><span class="v" id="c_v"><span class="badge off">—</span></span></div>
   <pre id="c_out">tekan Cek</pre>
   <div class="grid" style="margin-top:9px">
     <button id="btn_check">Cek</button>
+    <button id="btn_reload" class="ghost">Muat ulang</button>
     <button id="btn_log" class="ghost">Log</button>
   </div>
 </div>
@@ -135,27 +150,91 @@ pre{
 
 <div class="bar">
   <button id="btn_apply" class="primary">Apply</button>
-  <button id="btn_save">Simpan &amp; Jalankan</button>
+  <button id="btn_save">Simpan</button>
+  <button id="btn_restore" class="ghost" style="flex:0 0 auto;width:auto">Restore</button>
 </div>
 
 <script>
-const sh = (window.__cf_sh) || function(cmd){
-  return new Promise((res,rej)=>{
-    const br = (window.ksu && window.ksu.exec) ? window.ksu
-             : (window.apatch && window.apatch.exec) ? window.apatch
-             : (window.ksud && window.ksud.exec) ? window.ksud
-             : (window.ksu && window.ksu.spawn) ? window.ksu : null;
-    if(!br) return rej(new Error('nobridge'));
-    let done=false;
-    const cb=(errno,stdout,stderr)=>{ if(done)return; done=true; res({errno:errno||0,out:stdout||'',err:stderr||''}); };
-    try{ const r = br.exec(cmd, cb);
-      if(r && typeof r.then==='function') r.then(x=>{ if(done)return; done=true;
-        res({errno:x&&x.errno||0,out:(x&&x.stdout)||'',err:(x&&x.stderr)||''}); }).catch(rej);
-    }catch(e){ rej(e); }
-  });
-};
-const BIN = '/data/adb/modules/cpufakex/bin/cpufakex.sh';
+const CFB = (function(){
+  let mode = null, seq = 0;
+  function br(){
+    if(window.ksu && typeof window.ksu.exec === 'function') return window.ksu;
+    if(window.ksuNext && typeof window.ksuNext.exec === 'function') return window.ksuNext;
+    if(window.apatch && typeof window.apatch.exec === 'function') return window.apatch;
+    if(window.ksud && typeof window.ksud.exec === 'function') return window.ksud;
+    return null;
+  }
+  function viaName(cmd, ms){
+    return new Promise((res,rej)=>{
+      const B = br(); if(!B) return rej(new Error('nobridge'));
+      const n = '__cfcb' + (++seq);
+      let hit = false;
+      window[n] = function(code,out,err){
+        if(hit) return; hit = true;
+        try{ delete window[n]; }catch(e){}
+        res({errno: code||0, out: out||'', err: err||''});
+      };
+      let r;
+      try{ r = B.exec(cmd, n); }catch(e){ rej(e); return; }
+      if(r && typeof r.then === 'function'){
+        r.then(x=>{ if(hit) return; hit = true;
+          res({errno:(x&&x.errno)||0, out:(x&&x.stdout)||'', err:(x&&x.stderr)||''}); }).catch(rej);
+        return;
+      }
+      if(typeof r === 'string'){ if(hit) return; hit = true; res({errno:0, out:r, err:''}); return; }
+      setTimeout(()=>{ if(hit) return; hit = true; rej(new Error('timeout')); }, ms || 20000);
+    });
+  }
+  function viaSync(cmd){
+    return new Promise((res,rej)=>{
+      const B = br(); if(!B) return rej(new Error('nobridge'));
+      let r;
+      try{ r = B.exec(cmd); }catch(e){ return rej(e); }
+      if(typeof r === 'string') return res({errno:0, out:r, err:''});
+      if(r && typeof r.then === 'function')
+        return r.then(x=>res({errno:(x&&x.errno)||0, out:(x&&x.stdout)||'', err:(x&&x.stderr)||''})).catch(rej);
+      rej(new Error('nosync'));
+    });
+  }
+  let lastFail = 0;
+  async function probe(){
+    if(mode && mode !== 'none') return mode;
+    /* jangan probe ulang tiap perintah kalau baru saja gagal; beri jeda 3 detik */
+    if(mode === 'none' && (Date.now() - lastFail) < 3000) return 'none';
+    for(const m of ['name','sync']){
+      try{
+        const r = m === 'name' ? await viaName('echo __cfok', 3000) : await viaSync('echo __cfok');
+        if(String(r.out||'').indexOf('__cfok') >= 0){ mode = m; lastFail = 0; return mode; }
+      }catch(e){}
+    }
+    mode = 'none';
+    lastFail = Date.now();
+    return mode;
+  }
+  async function run(cmd){
+    const m = await probe();
+    if(m === 'none') throw new Error('nobridge');
+    return m === 'name' ? viaName(cmd, 30000) : viaSync(cmd);
+  }
+  return {run:run, probe:probe, mode:()=>mode, reset:()=>{ mode=null; }};
+})();
+const sh = function(cmd){ return CFB.run(cmd); };
 const q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
+let BIN = '/data/adb/modules/cpufakex/bin/cpufakex.sh';
+/* KernelSU-Next menaruh modul baru di modules_update sampai reboot; WebUI tetap harus jalan. */
+const BIN_CAND = [
+  '/data/adb/modules/cpufakex/bin/cpufakex.sh',
+  '/data/adb/modules_update/cpufakex/bin/cpufakex.sh'
+];
+async function resolveBin(){
+  for(const b of BIN_CAND){
+    try{
+      const r = await CFB.run('test -f ' + q(b) + ' && echo __yes');
+      if(String(r.out||'').indexOf('__yes') >= 0){ BIN = b; return b; }
+    }catch(e){}
+  }
+  return BIN;
+}
 const cfg = {};
 let dirty = false;
 
@@ -188,6 +267,7 @@ function renderTopo(){
 
 async function load(){
   try{
+    await resolveBin();
     const r = await sh('sh '+BIN+' dump');
     const lines = r.out.split('\n');
     const rt = {};
@@ -209,6 +289,15 @@ async function load(){
     set('s_prp', rt.props || '—');
     set('s_rp', rt.resetprop || '—');
     set('s_dmn', rt.daemon === '1' ? 'hidup' : 'mati');
+    set('d_rp', rt.resetprop || '—');
+    set('d_gp', rt.getprop || '—');
+    set('d_ns', rt.nsenter || '—');
+    set('d_se', rt.selinux === '1' ? 'enforcing' : rt.selinux === '0' ? 'permissive' : (rt.selinux||'—'));
+    set('d_pid', rt.ns_pids || '—');
+    set('d_st', rt.mounts + ' mount / ' + rt.props + ' prop');
+    set('d_bin', BIN.replace('/data/adb/', '').replace('/bin/cpufakex.sh',''));
+    const _bm = CFB.mode();
+    set('s_br', _bm === 'name' ? 'exec(cmd, cb)' : _bm === 'sync' ? 'exec(cmd) sync' : 'tidak ada');
 
     ['enabled','props','cpuinfo','dt','freq'].forEach(k=>{
       const map = {enabled:'enabled',props:'spoof_props',cpuinfo:'spoof_cpuinfo',dt:'spoof_devicetree',freq:'spoof_cpufreq'};
@@ -222,6 +311,11 @@ async function load(){
     dirty = false;
   }catch(e){
     set('hdr','bridge tidak tersedia — buka dari KernelSU/APatch');
+    set('s_br','tidak ada');
+    document.getElementById('c_out').textContent =
+      'Bridge tidak merespon: ' + (e && e.message ? e.message : e) +
+      '\n\nBuka WebUI dari dalam manager (KernelSU / APatch / MMRL), bukan dari browser.\n' +
+      'Kalau tetap kosong: tutup WebUI, buka lagi. Belum reboot setelah install juga bikin kosong.';
   }
 }
 
@@ -263,7 +357,7 @@ async function doCheck(){
     const m = {};
     r.out.split('\n').forEach(l=>{ const i=l.indexOf('='); if(i>0) m[l.slice(0,i).replace(/\./g,'_')] = l.slice(i+1); });
     const v = m.check_verdict || 'FAIL';
-    const cls = v==='OK'?'ok':v==='WARN'?'warn':'bad';
+    const cls = v==='OK'?'ok':v==='WARN'?'warn':v==='NOVERIFY'?'off':'bad';
     badge(document.getElementById('c_v'), v, cls);
     document.getElementById('c_out').textContent =
       (m.check_msg||'') + '\n' +
@@ -272,7 +366,7 @@ async function doCheck(){
       'devtree   ' + (m.check_devicetree||'') + '\n' +
       'soc0      ' + (m.check_soc0||'') + '\n' +
       'cpufreq   ' + (m.check_cpufreq||'');
-  }catch(e){ set('c_out','gagal: '+e.message); }
+  }catch(e){ set('c_out','check gagal: '+(e&&e.message?e.message:e)); }
 }
 
 document.getElementById('btn_apply').onclick = async ()=>{
@@ -289,6 +383,17 @@ document.getElementById('btn_save').onclick = async ()=>{
     await load(); await doCheck();
     set('c_out','tersimpan & dijalankan\n' + document.getElementById('c_out').textContent);
   }catch(e){ set('c_out','gagal: '+e.message); }
+};
+document.getElementById('btn_restore').onclick = async ()=>{
+  try{
+    const r = await sh('sh '+BIN+' restore');
+    await load(); await doCheck();
+    set('c_out','restore: '+(r.out||'selesai')+'\n'+(r.err||''));
+  }catch(e){ set('c_out','restore gagal: '+(e&&e.message?e.message:e)); }
+};
+document.getElementById('btn_reload').onclick = async ()=>{
+  CFB.reset(); set('c_out','memuat ulang…');
+  await load(); await doCheck();
 };
 document.getElementById('btn_check').onclick = doCheck;
 document.getElementById('btn_log').onclick = async ()=>{
@@ -310,7 +415,18 @@ function renderTopoFromInputs(){
   }
   document.getElementById('fchips').innerHTML = h;
 }
-load().then(()=>setTimeout(doCheck, 400));
+/* boot pertama: manager kadang menyuntik bridge setelah halaman tampil.
+   Coba 3x otomatis sebelum menyerah. */
+async function boot(){
+  for(let i=0;i<4;i++){
+    CFB.reset();
+    await load();
+    if(CFB.mode() !== 'none'){ await doCheck(); return; }
+    await new Promise(r=>setTimeout(r, 1500));
+  }
+  await doCheck();
+}
+boot();
 </script>
 </body>
 </html>

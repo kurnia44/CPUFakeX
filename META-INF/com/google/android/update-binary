@@ -23,6 +23,17 @@ chmod -R 755 "$CFG" 2>/dev/null
 chmod 600 "$CFG/config.conf" 2>/dev/null
 
 # migrasi v1.2: lapisan cpufreq dimatikan (cosmetic-only, bisa dinyalakan dari WebUI)
+# migrasi v1.3: cpufreq dinyalakan lagi (v1.2 memaksa 0 — itu bukan pilihan user)
+if ! grep -q '^migrated_v13=1' "$CFG/config.conf" 2>/dev/null; then
+  awk 'BEGIN{d=0}
+    index($0,"spoof_cpufreq=")==1{print "spoof_cpufreq=1"; d=1; next}
+    {print}
+    END{if(!d) print "spoof_cpufreq=1"; print "migrated_v13=1"}' \
+    "$CFG/config.conf" > "$CFG/config.conf.n3" 2>/dev/null && \
+    mv "$CFG/config.conf.n3" "$CFG/config.conf"
+  chmod 600 "$CFG/config.conf" 2>/dev/null
+fi
+
 if ! grep -q '^migrated_v12=1' "$CFG/config.conf" 2>/dev/null; then
   awk 'BEGIN{d=0}
     index($0,"spoof_cpufreq=")==1{print "spoof_cpufreq=0"; d=1; next}

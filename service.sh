@@ -11,7 +11,11 @@ mkdir -p "$CFG" 2>/dev/null
 # tunggu boot selesai
 _i=0
 while [ "$_i" -lt 120 ]; do
-  [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ] && break
+  _bc=""
+  for _g in getprop /system/bin/getprop; do
+    _bc=$($_g sys.boot_completed 2>/dev/null) && break
+  done
+  [ "$_bc" = "1" ] && break
   sleep 1
   _i=$((_i+1))
 done

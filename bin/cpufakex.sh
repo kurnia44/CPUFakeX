@@ -13,6 +13,9 @@ ORIG=$CFG/orig.props
 PID=$CFG/daemon.pid
 MOUNTLIST=$CFG/mounts.list
 
+MODVER=$(awk -F= '/^version=/{print $2;exit}' "$MODDIR/module.prop" 2>/dev/null)
+[ -n "$MODVER" ] || MODVER=v1.3
+
 mkdir -p "$FAKE" 2>/dev/null
 
 log() { printf '%s %s\n' "$(date '+%m-%d %H:%M:%S' 2>/dev/null)" "$*" >> "$LOG"; }
@@ -26,6 +29,12 @@ setv() { K="$1" V="$2" awk 'BEGIN{k=ENVIRON["K"];v=ENVIRON["V"];d=0}
 unsetk() { K="$1" awk 'BEGIN{k=ENVIRON["K"]}index($0,k"=")==1{next}{print}' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"; }
 
 SELFDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+# WebUI bisa dibuka dari /data/adb/modules_update sebelum reboot, dan metamodule bisa
+# memindahkan path modul. Kalau module.prop tidak ada di tempat yang diasumsikan, pakai
+# lokasi script sendiri (bin/..).
+if [ ! -f "$MODDIR/module.prop" ] && [ -f "$SELFDIR/../module.prop" ]; then
+  MODDIR=$(cd "$SELFDIR/.." 2>/dev/null && pwd)
+fi
 
 seed() {
   [ -d "$CFG" ] || mkdir -p "$CFG"
@@ -44,26 +53,63 @@ seed
 RP=""
 find_rp() {
   [ -n "$RP" ] && return 0
+  # RP = binary polos, flag -n ditambahkan di putprop (bukan di sini) supaya
+  # delprop tidak jadi "resetprop -n -d key" yang ditolak.
   for _c in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop \
-            /data/adb/magisk/resetprop /data/adb/modules/magisk/resetprop /data/adb/ksud; do
-    [ -x "$_c" ] && { RP="$_c -n"; return 0; }
+            /data/adb/magisk/resetprop /data/adb/modules/magisk/resetprop; do
+    [ -x "$_c" ] && { RP="$_c"; return 0; }
   done
-  if command -v resetprop >/dev/null 2>&1; then RP="resetprop -n"; return 0; fi
+  if command -v resetprop >/dev/null 2>&1; then RP="resetprop"; return 0; fi
   if [ -x /data/adb/ksu/bin/ksud ]; then RP="/data/adb/ksu/bin/ksud resetprop"; return 0; fi
-  if [ -x /data/adb/ksu/bin/busybox ]; then RP="/data/adb/ksu/bin/busybox resetprop -n"; return 0; fi
-  if [ -x /data/adb/magisk/busybox ]; then RP="/data/adb/magisk/busybox resetprop -n"; return 0; fi
+  if [ -x /data/adb/ksu/bin/busybox ]; then RP="/data/adb/ksu/bin/busybox resetprop"; return 0; fi
+  if [ -x /data/adb/magisk/busybox ]; then RP="/data/adb/magisk/busybox resetprop"; return 0; fi
   return 1
 }
 putprop() {
   [ -n "$2" ] || return 1
-  if find_rp; then $RP "$1" "$2" >/dev/null 2>&1 && return 0; fi
+  if find_rp; then
+    $RP -n "$1" "$2" >/dev/null 2>&1 && return 0
+    # sebagian build menolak menimpa ro.* yang sudah ada: hapus dulu, lalu tulis ulang
+    case "$1" in
+      ro.*) $RP -d "$1" >/dev/null 2>&1 || $RP --delete "$1" >/dev/null 2>&1
+            $RP -n "$1" "$2" >/dev/null 2>&1 && return 0 ;;
+    esac
+  fi
   setprop "$1" "$2" >/dev/null 2>&1
 }
-delprop() { find_rp && $RP -d "$1" >/dev/null 2>&1 && return 0; return 1; }
+delprop() {
+  find_rp || return 1
+  $RP -d "$1" >/dev/null 2>&1 && return 0
+  $RP --delete "$1" >/dev/null 2>&1 && return 0
+  return 1
+}
+
+GP=""
+find_gp() {
+  [ -n "$GP" ] && return 0
+  # getprop android dulu; busybox KSU/APatch tidak punya applet getprop di banyak build,
+  # jadi busybox hanya dipakai setelah dibuktikan bisa menjawab.
+  for _b in /system/bin/getprop /system/bin/toybox /debug_ramdisk/getprop; do
+    [ -x "$_b" ] || continue
+    case "$_b" in
+      *toybox) "$_b" getprop ro.bootmode >/dev/null 2>&1 && { GP="$_b getprop"; return 0; } ;;
+      *) "$_b" ro.bootmode >/dev/null 2>&1 && { GP="$_b"; return 0; } ;;
+    esac
+  done
+  if command -v getprop >/dev/null 2>&1 && getprop ro.bootmode >/dev/null 2>&1; then
+    GP=getprop; return 0
+  fi
+  for _b in /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox /data/adb/magisk/busybox; do
+    [ -x "$_b" ] && "$_b" getprop ro.bootmode >/dev/null 2>&1 && { GP="$_b getprop"; return 0; }
+  done
+  return 1
+}
+pget() { find_gp && $GP "$1" 2>/dev/null; }
 
 saveorig() {
   grep -q "^$1=" "$ORIG" 2>/dev/null && return 0
-  _ov=$(getprop "$1" 2>/dev/null)
+  find_gp || { log "getprop tidak tersedia: orig $1 tidak disimpan"; return 1; }
+  _ov=$(pget "$1")
   printf '%s=%s\n' "$1" "$_ov" >> "$ORIG" 2>/dev/null
 }
 
@@ -151,14 +197,24 @@ ns_pids() {
   fi
 }
 
-have_nsenter() { command -v nsenter >/dev/null 2>&1; }
+NSENTER=""
+find_nsenter() {
+  [ -n "$NSENTER" ] && return 0
+  if command -v nsenter >/dev/null 2>&1; then NSENTER=nsenter; return 0; fi
+  for _b in /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox \
+            /data/adb/magisk/busybox /data/adb/ksud/busybox; do
+    [ -x "$_b" ] && "$_b" nsenter --help >/dev/null 2>&1 && { NSENTER="$_b nsenter"; return 0; }
+  done
+  return 1
+}
+have_nsenter() { find_nsenter; }
 
 _ns_mount() { # $1 src $2 dst
   _src=$1; _dst=$2; _ok=0
   if have_nsenter; then
     for _p in $(ns_pids); do
       [ "$_p" = "$$" ] && continue
-      nsenter -t "$_p" -m -- mount -o bind "$_src" "$_dst" >/dev/null 2>>"$LOG" && _ok=$((_ok+1))
+      $NSENTER -t "$_p" -m -- mount -o bind "$_src" "$_dst" >/dev/null 2>>"$LOG" && _ok=$((_ok+1))
     done
   fi
   if [ "$_ok" -eq 0 ]; then
@@ -173,7 +229,7 @@ _ns_umount() { # $1 dst
   if have_nsenter; then
     for _p in $(ns_pids); do
       [ "$_p" = "$$" ] && continue
-      nsenter -t "$_p" -m -- umount "$_dst" >/dev/null 2>&1 && _ok=$((_ok+1))
+      $NSENTER -t "$_p" -m -- umount "$_dst" >/dev/null 2>&1 && _ok=$((_ok+1))
     done
   fi
   umount "$_dst" >/dev/null 2>&1 && _ok=$((_ok+1))
@@ -198,6 +254,34 @@ bind_to() { # $1 src $2 dst
 
 unbind() { [ -e "$1" ] || return 0; _ns_umount "$1" && log "unmount: $1"; }
 
+# cpufreq: bind per POLICY (bukan per cpu) — cpuN/cpufreq/* adalah symlink ke
+# policyN/*, jadi satu bind per file per policy sudah menutup semua core.
+mount_cpufreq() {
+  _cnt=0; _found=0
+  for _pd in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -d "$_pd" ] || continue
+    _found=1
+    _n=${_pd##*policy}
+    _rel=$(cat "$_pd/related_cpus" 2>/dev/null)
+    [ -n "$_rel" ] || _rel=$_n
+    _mx=0
+    for _c in $_rel; do
+      _v=$(freq_of "$_c")
+      [ "$_v" -gt "$_mx" ] 2>/dev/null && _mx=$_v
+    done
+    [ "$_mx" -gt 0 ] 2>/dev/null || _mx=$(freq_of "$_n")
+    printf '%s' "$_mx" > "$FAKE/pmax.$_n" 2>/dev/null
+    chmod 644 "$FAKE/pmax.$_n" 2>/dev/null
+    for _pf in cpuinfo_max_freq:pmax scaling_max_freq:pmax; do
+      _fn=${_pf%%:*}; _src=${_pf##*:}
+      [ -e "$_pd/$_fn" ] || continue
+      bind_to "$FAKE/$_src.$_n" "$_pd/$_fn" && _cnt=$((_cnt+1))
+    done
+  done
+  [ "$_found" = "1" ] || return 0
+  printf '%s' "$_cnt"
+}
+
 mount_layer() {
   : > "$MOUNTLIST" 2>/dev/null
   _count=0
@@ -216,34 +300,8 @@ mount_layer() {
     done
   fi
   if [ "$(getv spoof_cpufreq)" = "1" ]; then
-    _seen=" "
-    _i=0
-    while [ "$_i" -lt "$CORES" ]; do
-      _f=/sys/devices/system/cpu/cpu$_i/cpufreq/cpuinfo_max_freq
-      if [ -e "$_f" ]; then
-        _r=$(readlink -f "$_f" 2>/dev/null)
-        [ -n "$_r" ] || _r=$_f
-        case "$_seen" in
-          *" $_r "*)
-            ;;
-          *)
-            _seen="$_seen$_r "
-            _rel=$(cat "/sys/devices/system/cpu/cpu$_i/cpufreq/related_cpus" 2>/dev/null)
-            [ -n "$_rel" ] || _rel=$_i
-            _best=0
-            for _c in $_rel; do
-              _v=$(freq_of "$_c")
-              [ "$_v" -gt "$_best" ] 2>/dev/null && _best=$_v
-            done
-            [ "$_best" -gt 0 ] || _best=$(freq_of "$_i")
-            printf '%s' "$_best" > "$FAKE/pol.$_i" 2>/dev/null
-            chmod 644 "$FAKE/pol.$_i" 2>/dev/null
-            bind_to "$FAKE/pol.$_i" "$_r" && _count=$((_count+1))
-            ;;
-        esac
-      fi
-      _i=$((_i+1))
-    done
+    _cc=$(mount_cpufreq)
+    _count=$((_count + ${_cc:-0}))
   fi
   printf '%s' "$_count"
 }
@@ -263,11 +321,11 @@ unmount_layer() {
   done
   unbind /sys/devices/soc0/machine
   unbind /sys/devices/soc0/family
-  _i=0
-  while [ "$_i" -lt 32 ]; do
-    [ -e "/sys/devices/system/cpu/cpu$_i/cpufreq/cpuinfo_max_freq" ] && \
-      unbind "$(readlink -f "/sys/devices/system/cpu/cpu$_i/cpufreq/cpuinfo_max_freq" 2>/dev/null)"
-    _i=$((_i+1))
+  for _pd in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -d "$_pd" ] || continue
+    for _fn in cpuinfo_max_freq scaling_max_freq; do
+      [ -e "$_pd/$_fn" ] && unbind "$_pd/$_fn"
+    done
   done
   return 0
 }
@@ -326,32 +384,56 @@ restore() {
 
 # ---------- status / check ----------
 status() {
-  _model=$(getprop ro.soc.model 2>/dev/null)
-  _board=$(getprop ro.board.platform 2>/dev/null)
+  _model=$(pget ro.soc.model)
+  _board=$(pget ro.board.platform)
   _ci=$(awk -F': ' '/^CPU part/{print $2; exit}' /proc/cpuinfo 2>/dev/null | tr -d ' ')
   _dt=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
   _soc=$(tr -d '\0' < /sys/devices/soc0/machine 2>/dev/null)
-  _mx=$(cat /sys/devices/system/cpu/cpu7/cpufreq/cpuinfo_max_freq 2>/dev/null)
-  printf 'CPUFakeX  v1.1\n'
+  _las=$((CORES-1)); _mx=$(cat "/sys/devices/system/cpu/cpu$_las/cpufreq/cpuinfo_max_freq" 2>/dev/null)
+  printf 'CPUFakeX  %s\n' "$MODVER"
   printf 'target   : %s (%s)\n' "$(getv marketing)" "$(getv soc_model)"
   printf 'enabled  : %s\n' "$(getv enabled)"
   printf 'prop soc : %s | board %s\n' "${_model:-?}" "${_board:-?}"
   printf 'cpuinfo  : part %s (harap %s)\n' "${_ci:-?}" "$(getv cpu_part)"
   printf 'dt model : %s\n' "${_dt:-?}"
   printf 'soc0     : %s\n' "${_soc:-?}"
-  printf 'cpu7 max : %s (harap %s)\n' "${_mx:-?}" "$(freq_of 7)"
+  printf 'cpu%s max : %s (harap %s)\n' "$_las" "${_mx:-?}" "$(freq_of "$_las")"
   printf 'state    : %s\n' "$(cat "$STATE" 2>/dev/null)"
   printf 'daemon   : %s\n' "$(if [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null; then printf 'hidup(%s)' "$(cat "$PID")"; else printf 'mati'; fi)"
 }
 
 check() {
   _v_prop=FAIL; _hit=0; _tot=0
-  _pairs="ro.soc.model:$(getv soc_model) ro.board.platform:$(getv platform) ro.hardware:$(getv hardware)"
+  _pairs=""
+  if [ "$(getv spoof_props)" = "1" ] && [ -s "$CONF" ]; then
+    grep '^prop\.' "$CONF" 2>/dev/null > "$CFG/props.check"
+    if [ -s "$CFG/props.check" ]; then
+      while IFS= read -r _pl; do
+        _pk=${_pl%%=*}; _pv2=${_pl#*=}
+        _pk=${_pk#prop.}
+        [ -n "$_pk" ] && [ -n "$_pv2" ] && _pairs="$_pairs $_pk:$_pv2"
+      done < "$CFG/props.check"
+    fi
+  fi
+  [ -n "$_pairs" ] || _pairs="ro.soc.model:$(getv soc_model) ro.board.platform:$(getv platform) ro.hardware:$(getv hardware)"
+  if ! find_gp; then
+    _v_prop=NOVERIFY
+    _pairs=""
+    _badprop=" getprop tidak ada di shell ini"
+  fi
   for _pr in $_pairs; do
     _k=${_pr%%:*}; _e=${_pr##*:}
     [ -z "$_e" ] && continue
     _tot=$((_tot+1))
-    [ "$(getprop "$_k" 2>/dev/null)" = "$_e" ] && _hit=$((_hit+1))
+    if [ "$(pget "$_k")" = "$_e" ]; then
+      _hit=$((_hit+1))
+    else
+      case "$_badprop" in
+        "") _badprop=" $_k=$(pget "$_k")" ;;
+        *) _bn=$(printf '%s' "$_badprop" | tr ' ' '\n' | grep -c .)
+           [ "${_bn:-0}" -lt 6 ] && _badprop="$_badprop $_k=$(pget "$_k")" ;;
+      esac
+    fi
   done
   [ "$_tot" -gt 0 ] && [ "$_hit" -eq "$_tot" ] && _v_prop=OK
   [ "$_hit" -gt 0 ] && [ "$_hit" -lt "$_tot" ] && _v_prop=WARN
@@ -395,17 +477,23 @@ check() {
 
   _pass=0; _fail=0
   for _x in $_v_prop $_v_ci $_v_dt $_v_soc; do
-    [ "$_x" = "OK" ] && _pass=$((_pass+1)) || _fail=$((_fail+1))
+    case "$_x" in
+      OK) _pass=$((_pass+1)) ;;
+      NOVERIFY) : ;;
+      *) _fail=$((_fail+1)) ;;
+    esac
   done
   if [ "$_v_fr" != "OFF" ]; then
     [ "$_v_fr" = "OK" ] && _pass=$((_pass+1)) || _fail=$((_fail+1))
   fi
   _verdict=OK
   [ "$_fail" -gt 0 ] && _verdict=WARN
+  [ "$_v_prop" = "NOVERIFY" ] && [ "$_fail" -eq 0 ] && _verdict=WARN
   [ "$_fail" -ge 3 ] && _verdict=FAIL
 
   printf 'check.verdict=%s\n' "$_verdict"
-  printf 'check.props=%s (%s/%s)\n' "$_v_prop" "$_hit" "$_tot"
+  printf 'check.props=%s (%s/%s)%s\n' "$_v_prop" "$_hit" "$_tot" "$_badprop"
+  printf 'check.getprop=%s\n' "$(find_gp && printf '%s' "$GP" || printf 'tidak')"
   printf 'check.cpuinfo=%s (%s core)%s\n' "$_v_ci" "${_cn:-0}" "$_core_bad"
   printf 'check.devicetree=%s\n' "$_v_dt"
   printf 'check.soc0=%s\n' "$_v_soc"
@@ -424,8 +512,11 @@ dump() {
   printf 'rt.props=%s\n' "$(printf '%s' "$_d" | sed -n 's/.*props=\([^ ]*\).*/\1/p')"
   printf 'rt.cpuinfo_part=%s\n' "$(awk -F': ' '/^CPU part/{print $2; exit}' /proc/cpuinfo 2>/dev/null | tr -d ' ')"
   printf 'rt.dt_model=%s\n' "$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)"
-  printf 'rt.soc_model_prop=%s\n' "$(getprop ro.soc.model 2>/dev/null)"
+  printf 'rt.soc_model_prop=%s\n' "$(pget ro.soc.model)"
   printf 'rt.marketing=%s\n' "$(getv marketing)"
+  printf 'rt.getprop=%s\n' "$(find_gp && printf '%s' "$GP" || printf 'tidak')"
+  printf 'rt.nsenter=%s\n' "$(find_nsenter && printf '%s' "$NSENTER" || printf 'tidak')"
+  printf 'rt.selinux=%s\n' "$(cat /sys/fs/selinux/enforce 2>/dev/null || printf '?')"
   printf 'rt.ns_pids=%s\n' "$(ns_pids | tr '\n' ' ')"
   cat "$CONF"
 }
@@ -480,7 +571,7 @@ case "$1" in
   daemon) daemon ;;
   *)
     seed
-    printf 'CPUFakeX v1.1 — spoof SoC total\n'
+    printf 'CPUFakeX %s — spoof SoC total\n' "$MODVER"
     printf 'pakai: cpufakex.sh apply|restore|status|check|dump|log|mounts|cores|daemon|setk <k> <v>\n'
     ;;
 esac

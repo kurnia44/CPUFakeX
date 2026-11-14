@@ -4,7 +4,7 @@
 ui_print() { echo "$1"; }
 
 ui_print " "
-ui_print "  CPUFakeX v1.0 — eLSanz"
+ui_print "  CPUFakeX v1.3 — eLSanz"
 ui_print "  target : Snapdragon 8 Elite Extreme Gen 6"
 ui_print "  model  : SM8950 / sunridge"
 ui_print " "
