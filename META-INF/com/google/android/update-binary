@@ -15,7 +15,7 @@ $UNZIP -o "$ZIPFILE" -x 'META-INF/*' -d "$MODPATH" >/dev/null 2>&1
 
 chmod 755 "$MODPATH"/*.sh 2>/dev/null
 chmod 755 "$MODPATH"/bin/*.sh 2>/dev/null
-chmod 644 "$MODPATH/module.prop" "$MODPATH/defaults.conf" 2>/dev/null
+chmod 644 "$MODPATH/module.prop" "$MODPATH/defaults.conf" "$MODPATH/system.prop" 2>/dev/null
 chmod 644 "$MODPATH"/webroot/* 2>/dev/null
 chmod -R 755 "$CFG" 2>/dev/null
 

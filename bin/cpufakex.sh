@@ -333,7 +333,7 @@ status() {
   _dt=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
   _soc=$(tr -d '\0' < /sys/devices/soc0/machine 2>/dev/null)
   _mx=$(cat /sys/devices/system/cpu/cpu7/cpufreq/cpuinfo_max_freq 2>/dev/null)
-  printf 'CPUFakeX  v1.0\n'
+  printf 'CPUFakeX  v1.1\n'
   printf 'target   : %s (%s)\n' "$(getv marketing)" "$(getv soc_model)"
   printf 'enabled  : %s\n' "$(getv enabled)"
   printf 'prop soc : %s | board %s\n' "${_model:-?}" "${_board:-?}"
@@ -476,7 +476,7 @@ case "$1" in
   daemon) daemon ;;
   *)
     seed
-    printf 'CPUFakeX v1.0 — spoof SoC total\n'
+    printf 'CPUFakeX v1.1 — spoof SoC total\n'
     printf 'pakai: cpufakex.sh apply|restore|status|check|dump|log|mounts|cores|daemon|setk <k> <v>\n'
     ;;
 esac
